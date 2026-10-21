@@ -31,6 +31,7 @@ final class OmniClient {
     private var _anonId: String
     private var _userId: String?
     private var _optedOut: Bool
+    private var screens = ScreenDeduper()
 
     // Queue-confined state.
     private(set) var events: [Event] = []
@@ -130,7 +131,17 @@ final class OmniClient {
     func screen(_ name: String, properties: [String: Any] = [:]) {
         var props = Sanitizer.properties(properties, log: log)
         props["name"] = .string(name)
+        locked { screens.record(name) }
         capture("$screen", properties: props)
+    }
+
+    /// `$screen` for a screen the SDK saw appear. Skipped when it's the same screen as just before, and for
+    /// automatic ones when `captureScreens` is off.
+    func observedScreen(_ name: String, auto: Bool) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !auto || options.captureScreens else { return }
+        guard locked({ screens.shouldSend(name) }) else { return }
+        capture("$screen", properties: ["name": .string(name), "auto": .bool(auto)])
     }
 
     func identify(_ userId: String, traits: [String: Any]) {
@@ -172,6 +183,7 @@ final class OmniClient {
         locked {
             _anonId = anon
             _userId = nil
+            screens = ScreenDeduper()
         }
         storage.set(anon, forKey: StoreKey.anonId)
         storage.set(nil, forKey: StoreKey.userId)

@@ -14,7 +14,7 @@ https://github.com/DainoJung/omni-sdk-swift
 Or add it to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.2.0")
+.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.3.0")
 // target: .product(name: "Omni", package: "omni-sdk-swift")
 ```
 
@@ -73,9 +73,34 @@ Omni.configure(key: "opk_…", options: .init(
     flushInterval: 30,      // …or at least this often (seconds)
     maxQueue: 1000,         // most events kept while offline (oldest dropped first)
     captureLifecycle: true, // $app_installed, $app_updated, $app_opened
+    captureScreens: true,   // $screen each time a screen appears (iOS, tvOS)
     debug: false            // log to the console
 ))
 ```
+
+## Screens
+
+On iOS and tvOS, Omni records `$screen` each time a screen appears, so you see the path people take (onboarding,
+paywall, …) without touching each screen. It works for UIKit and SwiftUI: the name comes from the screen's type
+(`WordListViewController` → `WordList`, a `UIHostingController` showing `PaywallView` → `Paywall`, a `NavigationStack`
+destination or sheet showing `WordDetailView` → `WordDetail`). System screens (alerts, keyboards, share sheets, Safari,
+mail, photo pickers) and containers (navigation and tab bar controllers) are skipped, and the same screen twice in a row
+counts once. These events carry `auto: true`.
+
+Some SwiftUI screens have no type to go by: the app's root view, the first view inside a `NavigationStack`, and tabs
+of a `TabView` that aren't a `NavigationStack`. Name those yourself, or any screen you'd rather name:
+
+```swift
+HomeView()
+    .omniScreen("Home")
+```
+
+`.omniScreen` sends `$screen` when the view appears (on every platform, macOS included), and automatic capture leaves
+that screen to it. Put it where the view is created (as above) rather than inside the view's `body`, or give it the same
+name automatic capture would, so it isn't counted twice. `Omni.screen("Paywall")` still works anywhere.
+
+To turn automatic screens off: `Omni.configure(key: "opk_…", options: .init(captureScreens: false))`. On macOS there are
+no automatic screens; use `.omniScreen` or `Omni.screen`.
 
 ## Deleting a person
 
@@ -93,11 +118,12 @@ your coding agent; it places your app's whole tracking plan and keeps the rules 
 
 - The events you send, and their properties.
 - With `captureLifecycle` on: app installed, app updated and app opened.
+- With `captureScreens` on (iOS, tvOS): the name of each screen as it appears (from its type, see Screens).
 - With every event: app version and build, platform, device type, device model (e.g. `iPhone17,3`), OS version,
   locale, a session id, a random anonymous id made on first launch, and your user id after `identify`.
 
-What isn't collected: no IDFA or other advertising ids, no autocapture of taps or screens, no screenshots or session
-recordings, and no location. Email and traits are sent only when you set them.
+What isn't collected: no IDFA or other advertising ids, no autocapture of taps, no screen contents, screenshots or
+session recordings, and no location. Email and traits are sent only when you set them.
 
 Queued events stay on the device until they're sent, and are retried with backoff when the network is down. The
 package includes a privacy manifest (`PrivacyInfo.xcprivacy`).

@@ -72,7 +72,7 @@ Responses: `200 {"ok":true,"accepted":n}` · `400 {"error":…}` (bad body: don'
 | `$app_installed` | first launch ever | `version`, `build` |
 | `$app_updated` | first launch of a new version/build | `version`, `build`, `previous_version`, `previous_build` |
 | `$app_opened` | app comes to the foreground (and on cold start) | `from_background` (bool) |
-| `$screen` | `screen(name)` | `name` |
+| `$screen` | `screen(name)`; automatically when a screen appears (Swift SDK on iOS/tvOS, option `captureScreens`) | `name`, `auto` (true when captured automatically, false from `.omniScreen(...)`; absent from `screen(name)`) |
 | `$delete_user` | `deleteUser()` (account deleted) | — (`anon_id` and `user_id` name who: Omni deletes everything about them) |
 | `$pageview` | web page load / SPA navigation | `url`, `path`, `title`, `referrer`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term` |
 
@@ -103,4 +103,7 @@ billing id, not from events.
 - `optOut()` stops collection and clears the queue; `optIn()` resumes.
 - `reset()` (on logout): new `anon_id`, `user_id` cleared.
 - `deleteUser()` (on account deletion): sends `$delete_user` with the current ids right away, then resets.
+- Swift SDK: `$screen` is sent automatically on iOS/tvOS as screens appear (UIKit view controllers and the SwiftUI views
+  they host), named from the screen's type (`WordListViewController` → `WordList`, `PaywallView` → `Paywall`), never
+  the same name twice in a row. Option `captureScreens` (default on) turns it off; ignored on macOS.
 - No autocapture of taps/clicks, no screenshots, no IDFA.

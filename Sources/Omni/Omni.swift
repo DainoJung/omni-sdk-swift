@@ -9,7 +9,7 @@ import Foundation
 ///
 /// Every call is thread-safe, returns immediately and never throws. Work happens on a background queue.
 public enum Omni {
-    public static let sdkVersion = "0.2.0"
+    public static let sdkVersion = "0.3.0"
 
     public struct Options: Sendable {
         /// Omni Cloud's base URL. Events go to `<host>/v1/batch`.
@@ -23,6 +23,10 @@ public enum Omni {
         /// Send `$app_installed`, `$app_updated` and `$app_opened` automatically.
         /// (Flushing when the app goes to the background happens either way.)
         public var captureLifecycle: Bool
+        /// Send `$screen` automatically each time a screen appears (UIKit view controllers, and SwiftUI views
+        /// hosted in them), with `auto: true`. iOS and tvOS only; ignored on macOS. Name SwiftUI screens yourself
+        /// with `.omniScreen("Paywall")`.
+        public var captureScreens: Bool
         /// Log what the SDK does to the console.
         public var debug: Bool
 
@@ -31,12 +35,14 @@ public enum Omni {
                     flushInterval: TimeInterval = 30,
                     maxQueue: Int = 1000,
                     captureLifecycle: Bool = true,
+                    captureScreens: Bool = true,
                     debug: Bool = false) {
             self.host = host
             self.flushAt = flushAt
             self.flushInterval = flushInterval
             self.maxQueue = maxQueue
             self.captureLifecycle = captureLifecycle
+            self.captureScreens = captureScreens
             self.debug = debug
         }
 
@@ -108,6 +114,7 @@ public enum Omni {
         lock.unlock()
 
         client.start(appInBackground: AppState.isInBackground())
+        if options.captureScreens { ScreenCapture.install() }
         log("configured (\(device.platform), \(device.deviceModel ?? "unknown model"), anon_id \(client.anonymousId))")
     }
 
@@ -120,9 +127,15 @@ public enum Omni {
         client("track")?.track(event, properties: properties)
     }
 
-    /// Records a screen view (`$screen`).
+    /// Records a screen view (`$screen`). Screens are also recorded automatically on iOS and tvOS
+    /// (see `Options.captureScreens`); SwiftUI views can name themselves with `.omniScreen("Paywall")`.
     public static func screen(_ name: String, properties: [String: Any] = [:]) {
         client("screen")?.screen(name, properties: properties)
+    }
+
+    /// A screen the SDK saw appear: automatically (`auto: true`) or through `.omniScreen` (`auto: false`).
+    static func observedScreen(_ name: String, auto: Bool) {
+        (auto ? currentClient() : client("omniScreen"))?.observedScreen(name, auto: auto)
     }
 
     // MARK: Identity
@@ -202,7 +215,7 @@ public enum Omni {
     private static var observer: LifecycleObserver?
     private static var warnedUnconfigured = false
 
-    private static func currentClient() -> OmniClient? {
+    static func currentClient() -> OmniClient? {
         lock.lock()
         defer { lock.unlock() }
         return sharedClient
