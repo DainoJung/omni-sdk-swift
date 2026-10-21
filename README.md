@@ -14,7 +14,7 @@ https://github.com/DainoJung/omni-sdk-swift
 Or add it to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.1.0")
+.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.2.0")
 // target: .product(name: "Omni", package: "omni-sdk-swift")
 ```
 
@@ -76,6 +76,11 @@ Omni.configure(key: "opk_…", options: .init(
     debug: false            // log to the console
 ))
 ```
+
+## Deleting a person
+
+When someone deletes their account, call `Omni.deleteUser()`. Omni deletes everything it has about them (their events, traits
+and email), and this device starts over as a new anonymous person.
 
 ## Standard events
 

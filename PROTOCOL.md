@@ -73,6 +73,7 @@ Responses: `200 {"ok":true,"accepted":n}` · `400 {"error":…}` (bad body: don'
 | `$app_updated` | first launch of a new version/build | `version`, `build`, `previous_version`, `previous_build` |
 | `$app_opened` | app comes to the foreground (and on cold start) | `from_background` (bool) |
 | `$screen` | `screen(name)` | `name` |
+| `$delete_user` | `deleteUser()` (account deleted) | — (`anon_id` and `user_id` name who: Omni deletes everything about them) |
 | `$pageview` | web page load / SPA navigation | `url`, `path`, `title`, `referrer`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term` |
 
 ## Standard events (sent by the app)
@@ -101,4 +102,5 @@ billing id, not from events.
 - A session id is kept in `context.session_id`; a new one starts after 30 minutes in the background / without events.
 - `optOut()` stops collection and clears the queue; `optIn()` resumes.
 - `reset()` (on logout): new `anon_id`, `user_id` cleared.
+- `deleteUser()` (on account deletion): sends `$delete_user` with the current ids right away, then resets.
 - No autocapture of taps/clicks, no screenshots, no IDFA.

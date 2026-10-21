@@ -9,7 +9,7 @@ import Foundation
 ///
 /// Every call is thread-safe, returns immediately and never throws. Work happens on a background queue.
 public enum Omni {
-    public static let sdkVersion = "0.1.0"
+    public static let sdkVersion = "0.2.0"
 
     public struct Options: Sendable {
         /// Omni Cloud's base URL. Events go to `<host>/v1/batch`.
@@ -152,6 +152,12 @@ public enum Omni {
     /// Call on sign-out: a new anonymous id, and the user id is cleared.
     public static func reset() {
         client("reset")?.reset()
+    }
+
+    /// Call when the person deletes their account: Omni deletes everything it has about them (their events, traits
+    /// and email, under this device's ids and their user id), then this device starts over as a new anonymous person.
+    public static func deleteUser() {
+        client("deleteUser")?.deleteUser()
     }
 
     // MARK: Sending and privacy

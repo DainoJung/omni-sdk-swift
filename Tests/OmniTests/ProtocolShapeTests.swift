@@ -54,7 +54,7 @@ final class ProtocolShapeTests: XCTestCase {
         XCTAssertEqual(context["locale"] as? String, "ko-KR")
         XCTAssertEqual(context["os_version"] as? String, "26.1")
         XCTAssertEqual(context["device_model"] as? String, "iPhone17,3")
-        XCTAssertEqual(context["sdk"] as? String, "omni-swift/0.1.0")
+        XCTAssertEqual(context["sdk"] as? String, "omni-swift/\(Omni.sdkVersion)")
         assertLowercaseUUID(context["session_id"])
     }
 

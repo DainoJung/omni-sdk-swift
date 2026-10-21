@@ -100,6 +100,20 @@ final class LifecycleAndIdentityTests: XCTestCase {
         XCTAssertNotEqual(before.context.sessionId, after.context.sessionId)
     }
 
+    func testDeleteUserTellsOmniWhoToForgetThenStartsOver() throws {
+        let h = Harness()
+        let oldAnon = h.client.anonymousId
+        h.client.identify("user_1", traits: [:])
+        h.client.deleteUser()
+        h.drain()
+        // Sent right away (not left in the queue), with the ids as they were.
+        let delete = try XCTUnwrap(h.transport.sentEvents.first { $0["event"] as? String == "$delete_user" })
+        XCTAssertEqual(delete["anon_id"] as? String, oldAnon)
+        XCTAssertEqual(delete["user_id"] as? String, "user_1")
+        XCTAssertNotEqual(h.client.anonymousId, oldAnon)
+        XCTAssertNil(h.client.userId)
+    }
+
     func testAnonIdPersistsAcrossLaunches() {
         let storage = MemoryStore()
         let a = Harness(storage: storage).client.anonymousId

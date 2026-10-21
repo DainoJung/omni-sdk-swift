@@ -181,6 +181,13 @@ final class OmniClient {
         }
     }
 
+    /// `$delete_user` carries the ids as they are now, so Omni can find everything about this person; then a fresh start.
+    func deleteUser() {
+        capture("$delete_user")
+        reset()
+        flush()
+    }
+
     func optOut() {
         locked { _optedOut = true }
         storage.set(true, forKey: StoreKey.optedOut)
