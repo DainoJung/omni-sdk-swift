@@ -77,6 +77,13 @@ Omni.configure(key: "opk_…", options: .init(
 ))
 ```
 
+## Standard events
+
+Omni reads a few events by name in every app: `signup`, `onboarding_step` (`step`, `name`), `onboarding_completed`,
+`paywall_viewed` (`paywall`, `placement`), `purchase_started` (`product_id`, `paywall`), `share` and `invite_sent`. Send
+them where they happen, plus your app's own core action. Easiest: ask Omni for the install prompt and paste it into
+your coding agent; it places your app's whole tracking plan and keeps the rules in `AGENTS.md`.
+
 ## What's collected
 
 - The events you send, and their properties.

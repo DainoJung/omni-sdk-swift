@@ -75,6 +75,23 @@ Responses: `200 {"ok":true,"accepted":n}` · `400 {"error":…}` (bad body: don'
 | `$screen` | `screen(name)` | `name` |
 | `$pageview` | web page load / SPA navigation | `url`, `path`, `title`, `referrer`, `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term` |
 
+## Standard events (sent by the app)
+
+Every app sends these with `track` when it has the thing (plain names; `$` names are the SDK's own). They're named
+the same in every app, so Omni's funnel, activation and paywall analysis work from day one. The app's own core action
+and aha moment come on top, named by its tracking plan in Omni. Payments come from RevenueCat or Stripe, joined by the
+billing id, not from events.
+
+| event | when | properties |
+|---|---|---|
+| `signup` | an account is created (once per person) | `method` |
+| `onboarding_step` | each onboarding screen is shown | `step` (1-based), `name` |
+| `onboarding_completed` | onboarding finished or skipped | `skipped` |
+| `paywall_viewed` | a paywall / upgrade screen is shown | `paywall`, `placement` |
+| `purchase_started` | buy / start-trial tapped, before the store sheet | `product_id`, `paywall` |
+| `share` | something is shared out of the app | `content`, `channel` |
+| `invite_sent` | someone is invited | `channel` |
+
 ## SDK behavior (both SDKs)
 
 - Events go into a persisted queue and are sent in batches: every 30 s, at 20 queued events, and when the app goes
