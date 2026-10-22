@@ -4,6 +4,8 @@ import Foundation
 /// May be called on any thread.
 protocol Transport: AnyObject {
     func send(_ request: URLRequest, completion: @escaping (_ statusCode: Int?, _ error: Error?) -> Void)
+    /// Like `send`, for a request whose response body is wanted (the experiments config).
+    func fetch(_ request: URLRequest, completion: @escaping (_ statusCode: Int?, _ body: Data?, _ error: Error?) -> Void)
 }
 
 final class URLSessionTransport: Transport {
@@ -26,6 +28,17 @@ final class URLSessionTransport: Transport {
                 completion(http.statusCode, nil)
             } else {
                 completion(nil, error ?? URLError(.badServerResponse))
+            }
+        }
+        task.resume()
+    }
+
+    func fetch(_ request: URLRequest, completion: @escaping (Int?, Data?, Error?) -> Void) {
+        let task = session.dataTask(with: request) { data, response, error in
+            if let http = response as? HTTPURLResponse {
+                completion(http.statusCode, data, nil)
+            } else {
+                completion(nil, nil, error ?? URLError(.badServerResponse))
             }
         }
         task.resume()

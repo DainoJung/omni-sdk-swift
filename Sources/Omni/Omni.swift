@@ -9,10 +9,10 @@ import Foundation
 ///
 /// Every call is thread-safe, returns immediately and never throws. Work happens on a background queue.
 public enum Omni {
-    public static let sdkVersion = "0.3.0"
+    public static let sdkVersion = "0.4.0"
 
     public struct Options: Sendable {
-        /// Omni Cloud's base URL. Events go to `<host>/v1/batch`.
+        /// Omni Cloud's base URL. Events go to `<host>/v1/batch`; experiments come from `<host>/v1/config`.
         public var host: String
         /// Send once this many events are queued.
         public var flushAt: Int
@@ -56,10 +56,19 @@ public enum Omni {
         }
 
         /// `<host>/v1/batch`, or nil when `host` isn't an http(s) URL.
-        var batchURL: URL? {
+        var batchURL: URL? { url("/v1/batch") }
+
+        /// `<host>/v1/config?key=…`, where experiments come from.
+        func configURL(key: String) -> URL? {
+            guard let url = url("/v1/config"), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            parts.queryItems = [URLQueryItem(name: "key", value: key)]
+            return parts.url
+        }
+
+        private func url(_ path: String) -> URL? {
             var base = host.trimmingCharacters(in: .whitespacesAndNewlines)
             while base.hasSuffix("/") { base.removeLast() }
-            guard let url = URL(string: base + "/v1/batch"),
+            guard let url = URL(string: base + path),
                   let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
                   url.host != nil else { return nil }
             return url
@@ -101,7 +110,8 @@ public enum Omni {
             storage: UserDefaultsStore.standard(),
             queueStore: FileQueueStore(fileURL: FileQueueStore.defaultURL(), log: log),
             transport: URLSessionTransport(),
-            device: device
+            device: device,
+            pushPermission: SystemPushPermission.reader()
         )
 
         lock.lock()
@@ -137,6 +147,68 @@ public enum Omni {
     static func observedScreen(_ name: String, auto: Bool) {
         (auto ? currentClient() : client("omniScreen"))?.observedScreen(name, auto: auto)
     }
+
+    // MARK: Experiments
+
+    /// The variant of A/B test `key` this device gets (`"control"`, `"b"`, …), or nil: not loaded yet, not running,
+    /// or this person isn't in it. On nil, show what the app shows today.
+    ///
+    /// Assignment happens on the device, so it's instant and the same every time for this install (signing out
+    /// doesn't change it). The first call in a session tells Omni this person saw the experiment, so ask where the
+    /// screen is built, not earlier.
+    ///
+    /// ```swift
+    /// if Omni.variant("paywall_headline") == "b" { … }
+    /// ```
+    public static func variant(_ key: String) -> String? {
+        client("variant")?.experimentVariant(key)?.key
+    }
+
+    /// The payload of the variant this device gets (what the app reads: copy, a flag, a product id), or nil like
+    /// `variant(_:)`. Counts as seeing the experiment, the same as `variant(_:)`.
+    ///
+    /// ```swift
+    /// let headline = Omni.payload("paywall_headline")?["headline"]?.stringValue ?? "Go Pro"
+    /// ```
+    public static func payload(_ key: String) -> [String: JSONValue]? {
+        client("payload")?.experimentVariant(key)?.payload
+    }
+
+    /// Waits until the experiments are fetched, at most `timeout` seconds. Only needed for screens shown right at
+    /// first launch (onboarding), before the first fetch could finish; elsewhere the copy kept on the device is
+    /// read at once and refreshed in the background.
+    ///
+    /// ```swift
+    /// .task { await Omni.loadExperiments(); variant = Omni.variant("onboarding_v2") }
+    /// ```
+    public static func loadExperiments(timeout: TimeInterval = 2) async {
+        await client("loadExperiments")?.loadExperiments(timeout: timeout)
+    }
+
+    // MARK: Push
+
+    /// Reports this device's APNs token so Omni can send it pushes. Call it from
+    /// `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`, every launch: it's only sent when it
+    /// changed (or weekly). The environment (sandbox for development builds, production for the App Store and
+    /// TestFlight) comes from the build's provisioning profile.
+    public static func setPushToken(_ deviceToken: Data) {
+        guard let c = client("setPushToken") else { return }
+        c.setPushToken(Push.hex(deviceToken), provider: "apns", environment: currentPushEnvironment,
+                       topic: Bundle.main.bundleIdentifier)
+    }
+
+    /// Call when a notification is opened (`userNotificationCenter(_:didReceive:withCompletionHandler:)`, with
+    /// `response.notification.request.content.userInfo`). For Omni's pushes it records `$push_opened` and returns the
+    /// push's deep link, if it has one; for any other push it does nothing and returns nil.
+    @discardableResult
+    public static func trackPushOpened(_ userInfo: [AnyHashable: Any]) -> URL? {
+        guard let message = Push.omniMessage(userInfo) else { return nil }
+        client("trackPushOpened")?.pushOpened(messageId: message.messageId)
+        return message.url
+    }
+
+    /// Read once: the provisioning profile doesn't change while the app runs.
+    private static let currentPushEnvironment = Push.environment()
 
     // MARK: Identity
 

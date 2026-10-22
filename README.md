@@ -14,7 +14,7 @@ https://github.com/DainoJung/omni-sdk-swift
 Or add it to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.3.0")
+.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.4.0")
 // target: .product(name: "Omni", package: "omni-sdk-swift")
 ```
 
@@ -102,6 +102,101 @@ name automatic capture would, so it isn't counted twice. `Omni.screen("Paywall")
 To turn automatic screens off: `Omni.configure(key: "opk_…", options: .init(captureScreens: false))`. On macOS there are
 no automatic screens; use `.omniScreen` or `Omni.screen`.
 
+## Experiments (A/B tests)
+
+Omni runs A/B tests in your app: it decides what runs, and each device picks its variant on its own, instantly, from a
+copy of the experiments kept on the device (refreshed in the background). Ask where the screen is built:
+
+```swift
+struct PaywallView: View {
+    var body: some View {
+        // nil: not running, or this person isn't in it. Show what the app shows today.
+        let headline = Omni.payload("paywall_headline")?["headline"]?.stringValue ?? "Go Pro"
+        Text(headline)
+    }
+}
+```
+
+or branch on the variant's name:
+
+```swift
+if Omni.variant("paywall_layout") == "b" {
+    CompactPaywall()
+} else {
+    Paywall() // control, and nil
+}
+```
+
+The first `variant` or `payload` call for an experiment in a session tells Omni this person saw it (`$exposure`), so
+call them where the screen appears, not at launch. A person keeps their variant on this device, also after signing out.
+
+On the very first launch the experiments may not be on the device yet. For screens shown right away (onboarding), wait
+for them, at most 2 seconds:
+
+```swift
+struct OnboardingView: View {
+    @State private var variant: String?
+    @State private var ready = false
+
+    var body: some View {
+        Group {
+            if !ready { ProgressView() }
+            else if variant == "short" { ShortOnboarding() }
+            else { Onboarding() }
+        }
+        .task {
+            await Omni.loadExperiments()
+            variant = Omni.variant("onboarding_v2")
+            ready = true
+        }
+    }
+}
+```
+
+Payload values are `JSONValue`s: read them with `stringValue`, `intValue`, `doubleValue`, `boolValue`, `arrayValue`,
+`objectValue`, or get plain values with `Omni.payload("key")?.mapValues(\.anyValue)`.
+
+## Push notifications
+
+Omni can send push notifications to your app's users (you add your APNs key in Omni). The SDK reports the device token,
+the notification permission and opens of Omni's pushes. Pass the token every launch; it's only sent when it changed:
+
+```swift
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        Omni.configure(key: "opk_…")
+        UNUserNotificationCenter.current().delegate = self
+        application.registerForRemoteNotifications()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Omni.setPushToken(deviceToken)
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        // Records the open for Omni's pushes and hands back their deep link; other pushes return nil.
+        if let url = Omni.trackPushOpened(response.notification.request.content.userInfo) {
+            UIApplication.shared.open(url)
+        }
+        completionHandler()
+    }
+}
+
+@main
+struct MyApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    var body: some Scene { WindowGroup { ContentView() } }
+}
+```
+
+Ask for permission when it makes sense in your app (`UNUserNotificationCenter.current().requestAuthorization`). Omni
+reads the permission on launch and each time the app comes to the foreground, and reports it when it changed. Whether a
+token is for APNs' sandbox (builds run from Xcode) or production (TestFlight, App Store) comes from the build's
+provisioning profile. Add the Push Notifications capability in Xcode.
+
 ## Deleting a person
 
 When someone deletes their account, call `Omni.deleteUser()`. Omni deletes everything it has about them (their events, traits
@@ -121,6 +216,10 @@ your coding agent; it places your app's whole tracking plan and keeps the rules 
 - With `captureScreens` on (iOS, tvOS): the name of each screen as it appears (from its type, see Screens).
 - With every event: app version and build, platform, device type, device model (e.g. `iPhone17,3`), OS version,
   locale, a session id, a random anonymous id made on first launch, and your user id after `identify`.
+- Experiments: which variant this person saw (`$exposure`). The variant is picked on the device from a random id that's
+  never sent; the experiments are fetched from Omni with your app's key only.
+- Push, when you use it: the APNs device token, its environment and your bundle id; the notification permission; which
+  of Omni's pushes were opened.
 
 What isn't collected: no IDFA or other advertising ids, no autocapture of taps, no screen contents, screenshots or
 session recordings, and no location. Email and traits are sent only when you set them.

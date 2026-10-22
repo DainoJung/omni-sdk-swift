@@ -107,3 +107,106 @@ billing id, not from events.
   they host), named from the screen's type (`WordListViewController` → `WordList`, `PaywallView` → `Paywall`), never
   the same name twice in a row. Option `captureScreens` (default on) turns it off; ignored on macOS.
 - No autocapture of taps/clicks, no screenshots, no IDFA.
+
+## Experiments (A/B tests)
+
+Omni runs in-app experiments: the app asks the SDK which variant this device gets and shows that. Omni decides what
+runs; the SDK assigns on the device (no network round trip at the moment of asking) and reports exposures.
+
+```
+GET https://api.omnigrowth.app/v1/config?key=opk_…      (CORS *, Cache-Control: max-age=60)
+```
+
+```json
+{
+  "experiments": [
+    {
+      "key": "paywall_headline",
+      "variants": [
+        { "key": "control", "weight": 50, "payload": {} },
+        { "key": "b", "weight": 50, "payload": { "headline": "Remember every word you meet" } }
+      ],
+      "audience": { "platforms": ["ios", "ipados"], "new_users_since": "2026-10-22T00:00:00.000Z" },
+      "winner": null
+    }
+  ],
+  "ttl": 300
+}
+```
+
+- Only running or decided experiments are listed. An experiment the app asks about that isn't listed → no variant.
+- **Assignment** (identical in every SDK): `h = fnv1a32(UTF-8 of "<experiment key>:<bucket id>")` (32-bit FNV-1a:
+  offset basis 2166136261, prime 16777619), `bucket = h % 10000`. With `W` = sum of weights, walk the variants in
+  order adding `weight * 10000 / W`; the first variant whose running total is greater than `bucket` is the one.
+  The division is floating point (64-bit, no rounding: weights 1/1/1 give 3333.33…, 6666.66…, 10000); weights that
+  are missing, negative or not numbers count as 0; `W = 0` → no variant. If rounding leaves the last total a hair
+  under 10000, bucket 9999 goes to the last variant with a positive weight.
+  Test vectors (hash, bucket, chosen variant for 50/50 and 10/30/60): Tests/OmniTests/ExperimentTests.swift; every SDK tests them.
+- **Bucket id**: a random UUID made on first launch and kept on the device for good. Unlike `anon_id` it survives
+  `reset()` (logging out doesn't move a person to another variant) and is never sent anywhere.
+- **Audience** (all present conditions must hold, else not enrolled): `platforms` contains `context.platform`;
+  `new_users_since`: the device's first launch (the time `$app_installed` was recorded, kept on the device) is at or
+  after it. Devices that ran the app before the SDK had this stored count as old.
+- **Winner** set: every device matching `platforms` gets the winning variant (enrolled or not), and no exposures are
+  sent: the experiment is over and the app is just being told what to show.
+- SDK API: `variant(key) → string | null` and `payload(key) → object | null` (the chosen variant's payload). Null when
+  the config isn't loaded yet, the experiment isn't listed, or the device isn't enrolled: the app shows its default.
+  The first non-null `variant`/`payload` call for an experiment in a session (no winner) sends `$exposure`. The
+  experiments already reported are kept with the session id, so a relaunch / page reload inside the same session
+  doesn't repeat them; `reset()` starts a new session, so they're reported again for the new person.
+- Config: read from the device's copy at once, fetched at `configure`, on coming to the foreground when older than
+  `ttl` seconds (default 300 when absent), and by `loadExperiments(timeout)` (async; resolves when fetched or after
+  the timeout, default 2 s; for screens shown right at first launch such as onboarding). `loadExperiments` joins a
+  fetch already under way, and resolves at once when the copy is younger than `ttl`. A failed fetch (network error,
+  non-2xx, a body that isn't a config) keeps the last copy. Kept on disk. An experiment in a shape the SDK can't read
+  is skipped, not the whole config.
+- Web (`omni-growth`): same, with `localStorage` for the bucket id, the first visit's time and the copy; "coming to
+  the foreground" is the page becoming visible again.
+
+## Push notifications
+
+Omni sends push to the app's users (APNs for iOS, FCM for Android) from the founder's Mac with the founder's own
+credentials. The SDK only reports tokens, permission and opens.
+
+- `setPushToken(token)`: Swift takes the APNs device token `Data` (hex-encoded); Android/JS take a string (FCM token).
+  Sends `$push_token` when the token, provider or environment changed, or 7 days after the last one, and again right
+  after `reset()` (the token moves to the new anonymous id, so pushes follow whoever is signed in on the device).
+  FCM tokens are sent with `environment: "production"`. Swift: a new token is followed by the last `$push_permission`
+  again, since Omni keeps the permission with the token.
+- `$push_permission` `{ status }`: `authorized` | `denied` | `provisional` | `ephemeral` | `not_determined`. Swift
+  reads it at configure and on every foreground and sends it when it changed. Android: `authorized` / `denied` from
+  `NotificationManagerCompat.areNotificationsEnabled()`, same moments.
+- Omni's pushes carry `"omni": { "message_id": "m_…", "url": "<optional deep link>" }` (APNs: a top-level key of the
+  payload next to `aps`; FCM: data keys `omni_message_id`, `omni_url`). `trackPushOpened(userInfo | extras)` sends
+  `$push_opened` `{ message_id }` when the payload is Omni's and returns the deep link (or null). Android SDK also does
+  this itself for the launch intent of an activity opened from a notification.
+
+## Attribution (where people came from)
+
+- Web: on the first page view ever, the SDK keeps the first touch and sends `$attribution` once:
+  `{ source: "web", utm_source, utm_medium, utm_campaign, utm_content, utm_term, ct, referrer, landing_path }`
+  (`referrer` is the referring site's host, left out when it's the same site; `landing_path` the first page's path;
+  parameters that aren't in the URL are left out). If collection is off then (`optOut()` before or right after
+  `init`), it's kept and sent once collection is allowed. Browsers that ran an older SDK version have no first
+  visit to report and never send one. Omni's links to a website carry `utm_source=<channel>&utm_campaign=<ct>`.
+- Android: on first launch the SDK reads the Play Install Referrer and sends `$attribution`
+  `{ source: "play_install_referrer", referrer, utm_source, utm_medium, utm_campaign, utm_content, click_ts,
+  install_ts }` once (Omni's Play links carry `utm_campaign=<ct>`).
+- iOS: Apple doesn't hand the campaign to the app, so there's nothing automatic. Downloads per post come from App
+  Store Connect (campaign tokens); people come from the standard event `acquisition_source` (the app asks "Where did
+  you hear about us?" once).
+
+| event | when | properties |
+|---|---|---|
+| `$exposure` | first `variant`/`payload` of a running experiment in a session | `experiment`, `variant` |
+| `$push_token` | push token known / changed / weekly | `token`, `provider` (`apns` \| `fcm`), `environment` (`production` \| `sandbox`), `topic` (iOS bundle id) |
+| `$push_permission` | permission seen to change | `status` |
+| `$push_opened` | an Omni push was opened | `message_id` |
+| `$attribution` | once per install (web, Android) | as above |
+| `acquisition_source` (standard, sent by the app) | the person answered "where did you hear about us?" | `source` (`instagram` \| `tiktok` \| `threads` \| `youtube` \| `friend` \| `app_store_search` \| `web` \| `other`), `detail` |
+
+## Email
+
+The app passes `email` and `email_consent` (true only after the person agreed to marketing email) as traits. Omni
+emails only people with consent, from the founder's own verified domain, through Omni Cloud; every email carries a
+one-click unsubscribe link that sets `email_consent` to false in Omni. Nothing for the SDK to do beyond the traits.

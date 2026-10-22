@@ -16,6 +16,18 @@ enum StoreKey {
     static let lastBuild = "last_build"
     static let sessionId = "session_id"
     static let sessionLastActivity = "session_last_activity"
+    /// Kept for good, through `reset()`: experiments assign from it, so logging out doesn't change a variant.
+    static let bucketId = "bucket_id"
+    /// When this install first ran (with the SDK keeping it); experiments with `new_users_since` read it.
+    static let firstLaunch = "first_launch_at"
+    static let config = "config"
+    static let configFetchedAt = "config_fetched_at"
+    /// The session and the experiments already reported in it (`$exposure` once per experiment per session).
+    static let exposures = "exposures"
+    static let pushToken = "push_token"
+    static let pushEnvironment = "push_environment"
+    static let pushTokenSentAt = "push_token_sent_at"
+    static let pushPermission = "push_permission"
 }
 
 final class UserDefaultsStore: KeyValueStore {

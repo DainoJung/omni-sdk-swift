@@ -1,7 +1,11 @@
 import Foundation
 
-/// A JSON-safe value. Everything the SDK queues and sends is made of these.
-enum JSONValue: Codable, Equatable {
+/// A JSON value. Everything the SDK queues and sends is made of these, and experiment payloads come as these.
+///
+/// ```swift
+/// let headline = Omni.payload("paywall_headline")?["headline"]?.stringValue ?? "Go Pro"
+/// ```
+public enum JSONValue: Codable, Equatable, Sendable {
     case null
     case bool(Bool)
     case int(Int64)
@@ -10,7 +14,7 @@ enum JSONValue: Codable, Equatable {
     case array([JSONValue])
     case object([String: JSONValue])
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if c.decodeNil() {
             self = .null
@@ -29,7 +33,7 @@ enum JSONValue: Codable, Equatable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         switch self {
         case .null: try c.encodeNil()
@@ -39,6 +43,61 @@ enum JSONValue: Codable, Equatable {
         case .string(let v): try c.encode(v)
         case .array(let v): try c.encode(v)
         case .object(let v): try c.encode(v)
+        }
+    }
+
+    // MARK: Reading values
+
+    /// The string, or nil when this isn't one.
+    public var stringValue: String? {
+        if case .string(let v) = self { return v }
+        return nil
+    }
+
+    /// The number as an `Int`, or nil when this isn't a whole number.
+    public var intValue: Int? {
+        switch self {
+        case .int(let v): return Int(exactly: v)
+        case .double(let v): return Int(exactly: v)
+        default: return nil
+        }
+    }
+
+    /// The number as a `Double` (whole numbers too), or nil when this isn't a number.
+    public var doubleValue: Double? {
+        switch self {
+        case .int(let v): return Double(v)
+        case .double(let v): return v
+        default: return nil
+        }
+    }
+
+    public var boolValue: Bool? {
+        if case .bool(let v) = self { return v }
+        return nil
+    }
+
+    public var arrayValue: [JSONValue]? {
+        if case .array(let v) = self { return v }
+        return nil
+    }
+
+    public var objectValue: [String: JSONValue]? {
+        if case .object(let v) = self { return v }
+        return nil
+    }
+
+    /// Plain Swift values (`String`, `Int`, `Double`, `Bool`, `NSNull`, arrays, dictionaries), for code that reads
+    /// `[String: Any]`: `Omni.payload("onboarding_v2")?.mapValues(\.anyValue)`.
+    public var anyValue: Any {
+        switch self {
+        case .null: return NSNull()
+        case .bool(let v): return v
+        case .int(let v): return Int(exactly: v).map { $0 as Any } ?? Double(v)
+        case .double(let v): return v
+        case .string(let v): return v
+        case .array(let v): return v.map(\.anyValue)
+        case .object(let v): return v.mapValues(\.anyValue)
         }
     }
 }
@@ -146,8 +205,19 @@ enum Timestamp {
         return f
     }()
 
+    private static let wholeSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     /// `2026-10-21T08:59:58.120Z`
     static func string(from date: Date) -> String { formatter.string(from: date) }
+
+    /// ISO 8601 with or without fractional seconds, or nil.
+    static func date(from string: String) -> Date? {
+        formatter.date(from: string) ?? wholeSeconds.date(from: string)
+    }
 }
 
 struct Log {
