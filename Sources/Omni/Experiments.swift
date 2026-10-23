@@ -1,26 +1,37 @@
 import Foundation
 
-/// What `GET <host>/v1/config` serves (PROTOCOL.md, Experiments). Decoded leniently: an experiment Omni added later in
-/// a shape this version doesn't know is skipped, not a reason to drop the whole config.
+/// What `GET <host>/v1/config` serves (PROTOCOL.md, Experiments; Push buttons). Decoded leniently: an experiment or
+/// push category Omni added later in a shape this version doesn't know is skipped, not a reason to drop the whole config.
 struct ExperimentConfig: Decodable, Equatable {
     static let defaultTTL: TimeInterval = 300
 
     var experiments: [Experiment]
+    /// The button sets Omni's pushes can use; registered with the system whenever the config is loaded.
+    var pushCategories: [PushCategory]
     var ttl: TimeInterval
 
-    init(experiments: [Experiment], ttl: TimeInterval = ExperimentConfig.defaultTTL) {
+    init(experiments: [Experiment], pushCategories: [PushCategory] = [], ttl: TimeInterval = ExperimentConfig.defaultTTL) {
         self.experiments = experiments
+        self.pushCategories = pushCategories
         self.ttl = ttl
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         experiments = (try c.decodeIfPresent([Lossy<Experiment>].self, forKey: .experiments) ?? []).compactMap(\.value)
+        let categories = ((try? c.decodeIfPresent([Lossy<PushCategory>].self, forKey: .pushCategories)) ?? nil)?
+            .compactMap(\.value) ?? []
+        // One category per id: the system keys them by id.
+        var seen = Set<String>()
+        pushCategories = categories.filter { seen.insert($0.id).inserted }
         let ttl = (try? c.decodeIfPresent(Double.self, forKey: .ttl)) ?? nil
         self.ttl = ttl.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? ExperimentConfig.defaultTTL
     }
 
-    enum CodingKeys: String, CodingKey { case experiments, ttl }
+    enum CodingKeys: String, CodingKey {
+        case experiments, ttl
+        case pushCategories = "push_categories"
+    }
 
     func experiment(_ key: String) -> Experiment? {
         experiments.first { $0.key == key }
@@ -67,7 +78,7 @@ struct Audience: Decodable, Equatable {
 }
 
 /// Decodes `T`, or nil when this element doesn't fit.
-private struct Lossy<T: Decodable>: Decodable {
+struct Lossy<T: Decodable>: Decodable {
     let value: T?
     init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }

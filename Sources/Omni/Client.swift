@@ -25,7 +25,10 @@ final class OmniClient {
     private let transport: Transport
     private let device: DeviceInfo
     private let pushPermission: PushPermissionReader?
+    private let pushCategories: PushCategoryRegistrar?
     private let now: () -> Date
+    /// The device's time zone, read for each event (people travel).
+    private let timeZone: () -> String
     private let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.withoutEscapingSlashes]
@@ -72,7 +75,9 @@ final class OmniClient {
          transport: Transport,
          device: DeviceInfo,
          pushPermission: PushPermissionReader? = nil,
-         now: @escaping () -> Date = Date.init) {
+         pushCategories: PushCategoryRegistrar? = nil,
+         now: @escaping () -> Date = Date.init,
+         timeZone: @escaping () -> String = { TimeZone.current.identifier }) {
         self.key = key
         self.options = options
         self.endpoint = endpoint
@@ -83,7 +88,9 @@ final class OmniClient {
         self.transport = transport
         self.device = device
         self.pushPermission = pushPermission
+        self.pushCategories = pushCategories
         self.now = now
+        self.timeZone = timeZone
 
         _anonId = OmniClient.storedAnonId(storage)
         _userId = storage.string(StoreKey.userId)
@@ -375,7 +382,8 @@ final class OmniClient {
             }
             storage.set(String(data: body, encoding: .utf8), forKey: StoreKey.config)
             storage.set(at.timeIntervalSince1970, forKey: StoreKey.configFetchedAt)
-            log("experiments: \(config.experiments.map(\.key))")
+            log("experiments: \(config.experiments.map(\.key)), push categories: \(config.pushCategories.map(\.id))")
+            pushCategories?(config.pushCategories)
         } else if let status {
             log("experiments config: HTTP \(status); keeping the last copy")
         } else {
@@ -402,7 +410,8 @@ final class OmniClient {
         }
         let ts = now()
         let (anon, user) = locked { (_anonId, _userId) }
-        let registration = PushRegistration(token: token, provider: provider, environment: environment, topic: topic, sentAt: nil)
+        let registration = PushRegistration(token: token, provider: provider, environment: environment, topic: topic,
+                                            buttons: Push.showsButtons, sentAt: nil)
         queue.async { [self] in
             let last: PushRegistration? = OmniClient.decode(storage.string(StoreKey.pushToken))
             if let last, last.sameDevice(as: registration), let sentAt = last.sentAt.map(Date.init(timeIntervalSince1970:)),
@@ -427,16 +436,19 @@ final class OmniClient {
             "environment": .string(registration.environment),
         ]
         if let topic = registration.topic { props["topic"] = .string(topic) }
+        // This device can show Omni's buttons; devices without it get pushes without them.
+        if Push.showsButtons { props["buttons"] = .bool(true) }
         enqueue("$push_token", properties: props, identity: nil, ts: ts, anonId: anonId, userId: userId)
         var sent = registration
+        sent.buttons = Push.showsButtons
         sent.sentAt = ts.timeIntervalSince1970
         storage.set(OmniClient.encode(sent), forKey: StoreKey.pushToken)
         return true
     }
 
-    /// `$push_opened` for one of Omni's pushes.
-    func pushOpened(messageId: String) {
-        capture("$push_opened", properties: ["message_id": .string(messageId)])
+    /// `$push_opened` for one of Omni's pushes: `action` is `open` (the notification itself) or the button's id.
+    func pushOpened(messageId: String, action: String = "open") {
+        capture("$push_opened", properties: ["message_id": .string(messageId), "action": .string(action)])
     }
 
     private func readPushPermission() {
@@ -456,10 +468,11 @@ final class OmniClient {
 
     // MARK: Lifecycle
 
-    /// Cold start: install/update detection, the first `$app_opened`, the flush timer, a fresh experiments config
-    /// and the push permission.
+    /// Cold start: install/update detection, the first `$app_opened`, the flush timer, the push categories of the
+    /// config copy on the device, a fresh experiments config and the push permission.
     func start(appInBackground: Bool) {
         queue.async { [self] in
+            if let pushCategories, let config = locked({ _config }) { pushCategories(config.pushCategories) }
             detectInstallOrUpdate()
             if options.captureLifecycle {
                 if appInBackground {
@@ -592,6 +605,7 @@ final class OmniClient {
             locale: device.locale,
             osVersion: device.osVersion,
             deviceModel: device.deviceModel,
+            timezone: timeZone(),
             sessionId: sessionId,
             sdk: "omni-swift/\(Omni.sdkVersion)"
         )
@@ -771,10 +785,12 @@ struct PushRegistration: Codable, Equatable {
     var provider: String
     var environment: String
     var topic: String?
+    /// Sent as `buttons`. Nil in registrations kept by SDKs before 0.5.0, so updating resends the token at once.
+    var buttons: Bool?
     var sentAt: TimeInterval?
 
     func sameDevice(as other: PushRegistration) -> Bool {
-        token == other.token && provider == other.provider && environment == other.environment
+        token == other.token && provider == other.provider && environment == other.environment && buttons == other.buttons
     }
 }
 

@@ -9,6 +9,8 @@ struct EventContext: Codable, Equatable {
     var locale: String?
     var osVersion: String?
     var deviceModel: String?
+    /// IANA time zone (`Asia/Seoul`), read per event since people travel: Omni sends pushes at a local time.
+    var timezone: String?
     var sessionId: String?
     var sdk: String?
 
@@ -20,6 +22,7 @@ struct EventContext: Codable, Equatable {
         case locale
         case osVersion = "os_version"
         case deviceModel = "device_model"
+        case timezone
         case sessionId = "session_id"
         case sdk
     }

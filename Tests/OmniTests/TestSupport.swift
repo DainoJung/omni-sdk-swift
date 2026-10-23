@@ -121,7 +121,9 @@ struct Harness {
          transport: MockTransport = MockTransport(),
          clock: TestClock = TestClock(),
          device: DeviceInfo = Harness.device,
-         pushPermission: PushPermissionReader? = nil) {
+         pushPermission: PushPermissionReader? = nil,
+         pushCategories: PushCategoryRegistrar? = nil,
+         timeZone: @escaping () -> String = { TimeZone.current.identifier }) {
         self.storage = storage
         self.queueStore = queueStore
         self.transport = transport
@@ -135,7 +137,9 @@ struct Harness {
             transport: transport,
             device: device,
             pushPermission: pushPermission,
-            now: { clock.now }
+            pushCategories: pushCategories,
+            now: { clock.now },
+            timeZone: timeZone
         )
     }
 

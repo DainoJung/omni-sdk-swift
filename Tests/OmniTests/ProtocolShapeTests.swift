@@ -46,7 +46,7 @@ final class ProtocolShapeTests: XCTestCase {
 
         let context = try XCTUnwrap(event["context"] as? [String: Any])
         XCTAssertEqual(Set(context.keys), ["app_version", "build", "platform", "device_type", "locale",
-                                           "os_version", "device_model", "session_id", "sdk"])
+                                           "os_version", "device_model", "timezone", "session_id", "sdk"])
         XCTAssertEqual(context["app_version"] as? String, "1.4.0")
         XCTAssertEqual(context["build"] as? String, "52")
         XCTAssertEqual(context["platform"] as? String, "ios")
@@ -54,8 +54,20 @@ final class ProtocolShapeTests: XCTestCase {
         XCTAssertEqual(context["locale"] as? String, "ko-KR")
         XCTAssertEqual(context["os_version"] as? String, "26.1")
         XCTAssertEqual(context["device_model"] as? String, "iPhone17,3")
+        XCTAssertEqual(context["timezone"] as? String, TimeZone.current.identifier)
         XCTAssertEqual(context["sdk"] as? String, "omni-swift/\(Omni.sdkVersion)")
         assertLowercaseUUID(context["session_id"])
+    }
+
+    /// Read when each event is made, not once at configure: people travel.
+    func testTimezoneOnEveryEvent() {
+        let zone = Box("Asia/Seoul")
+        let h = Harness(timeZone: { zone.value })
+        h.client.track("before")
+        h.drain()
+        zone.value = "Pacific/Auckland"
+        h.client.track("after")
+        XCTAssertEqual(h.queued.map(\.context.timezone), ["Asia/Seoul", "Pacific/Auckland"])
     }
 
     func testIdentityEvents() throws {

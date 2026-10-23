@@ -55,6 +55,150 @@ enum Push {
         let url = (omni["url"] as? String).flatMap { $0.isEmpty ? nil : URL(string: $0) }
         return (id, url)
     }
+
+    /// Whether this platform can show Omni's buttons (notification categories): sent as `buttons` with `$push_token`.
+    static let showsButtons: Bool = {
+        #if canImport(UserNotifications) && !os(watchOS) && !os(tvOS)
+        return true
+        #else
+        return false
+        #endif
+    }()
+
+    #if canImport(UserNotifications) && !os(watchOS) && !os(tvOS)
+    /// What opening one of Omni's pushes means: the `$push_opened` action (`open`, or the button's id) and the URL to
+    /// open. Nil when the push isn't Omni's or was dismissed (not an open). A button's url comes from its category in
+    /// the config, else the push's own; a button that leaves the app in the background and has no url opens nothing.
+    static func opened(actionIdentifier: String, categoryIdentifier: String, userInfo: [AnyHashable: Any],
+                       categories: [PushCategory]) -> (messageId: String, action: String, url: URL?)? {
+        guard actionIdentifier != UNNotificationDismissActionIdentifier,
+              let message = omniMessage(userInfo) else { return nil }
+        if actionIdentifier == UNNotificationDefaultActionIdentifier {
+            return (message.messageId, "open", message.url)
+        }
+        let button = categories.first { $0.id == categoryIdentifier }?.actions.first { $0.id == actionIdentifier }
+        if let button, !button.foreground, button.url == nil {
+            return (message.messageId, actionIdentifier, nil)
+        }
+        return (message.messageId, actionIdentifier, button?.url ?? message.url)
+    }
+    #endif
+}
+
+/// A set of buttons Omni's pushes can carry (PROTOCOL.md, Push buttons): registered with the system as a notification
+/// category, and named by the push's `aps.category`. Only ids starting with `omni_`, so the app's own are never touched.
+struct PushCategory: Decodable, Equatable {
+    static let prefix = "omni_"
+
+    var id: String
+    var actions: [PushAction]
+
+    init(id: String, actions: [PushAction]) {
+        self.id = id
+        self.actions = actions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        guard id.hasPrefix(PushCategory.prefix), id.count > PushCategory.prefix.count else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "not an omni_ category")
+        }
+        // A button in a shape this version can't read is left out, not the whole category.
+        actions = try c.decode([Lossy<PushAction>].self, forKey: .actions).compactMap(\.value)
+    }
+
+    enum CodingKeys: String, CodingKey { case id, actions }
+}
+
+struct PushAction: Decodable, Equatable {
+    var id: String
+    var title: String
+    var url: URL?
+    /// Tapping it brings the app to the foreground.
+    var foreground: Bool
+
+    init(id: String, title: String, url: URL? = nil, foreground: Bool) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.foreground = foreground
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        guard !id.isEmpty, !title.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "empty id or title")
+        }
+        url = ((try? c.decodeIfPresent(String.self, forKey: .url)) ?? nil).flatMap { $0.isEmpty ? nil : URL(string: $0) }
+        // Absent: a button with a link has to open the app to follow it.
+        foreground = ((try? c.decodeIfPresent(Bool.self, forKey: .foreground)) ?? nil) ?? (url != nil)
+    }
+
+    enum CodingKeys: String, CodingKey { case id, title, url, foreground }
+}
+
+/// Hands Omni's push categories (all of them, from the config just loaded) to the system, next to the app's own.
+/// Injected, like the permission reader: `UNUserNotificationCenter` crashes outside an app bundle.
+typealias PushCategoryRegistrar = (_ categories: [PushCategory]) -> Void
+
+enum SystemPushCategories {
+    /// The system registrar, or nil where there's nothing to register with (app extensions, tools, tvOS, watchOS).
+    static func registrar() -> PushCategoryRegistrar? {
+        #if canImport(UserNotifications) && !os(watchOS) && !os(tvOS)
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+        return { categories in
+            let center = UNUserNotificationCenter.current()
+            register(categories,
+                     get: { done in center.getNotificationCategories { done($0) } },
+                     set: { center.setNotificationCategories($0) })
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    #if canImport(UserNotifications) && !os(watchOS) && !os(tvOS)
+    /// Reads the current categories, swaps the `omni_` ones for `categories` and sets the union, keeping the app's own.
+    /// Skipped when Omni's are already exactly these, so loading the same config again changes nothing; comparing with
+    /// what the system holds (not what was last set) puts Omni's back if the app replaced the whole set meanwhile.
+    static func register(_ categories: [PushCategory],
+                         get: (@escaping (Set<UNNotificationCategory>) -> Void) -> Void,
+                         set: @escaping (Set<UNNotificationCategory>) -> Void) {
+        get { current in
+            let isOmni = { (c: UNNotificationCategory) in c.identifier.hasPrefix(PushCategory.prefix) }
+            let registered = Set(current.filter(isOmni).map(Signature.init))
+            guard registered != Set(categories.map(Signature.init)) else { return }
+            set(current.filter { !isOmni($0) }.union(categories.map(category)))
+        }
+    }
+
+    static func category(_ c: PushCategory) -> UNNotificationCategory {
+        let actions = c.actions.map {
+            UNNotificationAction(identifier: $0.id, title: $0.title, options: $0.foreground ? [.foreground] : [])
+        }
+        return UNNotificationCategory(identifier: c.id, actions: actions, intentIdentifiers: [], options: [])
+    }
+
+    /// What the system shows of a category: a url change alone needs no re-registration (it's read at open time).
+    private struct Signature: Hashable {
+        struct Button: Hashable { var id: String; var title: String; var foreground: Bool }
+        var id: String
+        var buttons: [Button]
+
+        init(_ c: PushCategory) {
+            id = c.id
+            buttons = c.actions.map { Button(id: $0.id, title: $0.title, foreground: $0.foreground) }
+        }
+
+        init(_ c: UNNotificationCategory) {
+            id = c.identifier
+            buttons = c.actions.map { Button(id: $0.identifier, title: $0.title, foreground: $0.options.contains(.foreground)) }
+        }
+    }
+    #endif
 }
 
 /// Reads the notification permission and calls back with its `$push_permission` status (or nil when it can't tell).

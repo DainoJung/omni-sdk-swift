@@ -210,3 +210,48 @@ credentials. The SDK only reports tokens, permission and opens.
 The app passes `email` and `email_consent` (true only after the person agreed to marketing email) as traits. Omni
 emails only people with consent, from the founder's own verified domain, through Omni Cloud; every email carries a
 one-click unsubscribe link that sets `email_consent` to false in Omni. Nothing for the SDK to do beyond the traits.
+
+## Time zone (for local-time pushes)
+
+Every event's `context` carries `timezone`: the device's IANA time zone (`Asia/Seoul`, `America/Los_Angeles`), read
+when the event is made (people travel). Swift `TimeZone.current.identifier`, Android `TimeZone.getDefault().id`, web
+`Intl.DateTimeFormat().resolvedOptions().timeZone`. Omni Cloud keeps it as the event property `$timezone`. Omni uses
+the latest one per person to send at a local time, at the hour each person usually opens the app, and to keep quiet
+hours.
+
+## Push buttons (action buttons)
+
+Omni can add up to 3 buttons to a push. The buttons a push uses are defined ahead of time as a *category* in the
+config (`GET /v1/config`), next to experiments:
+
+```json
+{
+  "experiments": [],
+  "push_categories": [
+    { "id": "omni_7f3a2c", "actions": [ { "id": "b1", "title": "Review now", "url": "scribo://review", "foreground": true },
+                                         { "id": "b2", "title": "Later", "foreground": false } ] }
+  ],
+  "ttl": 300
+}
+```
+
+- iOS (Swift SDK 0.5.0+): whenever the config is loaded (from the device's copy at configure, and after each fetch),
+  the SDK registers every listed category with `UNUserNotificationCenter`, keeping the app's own categories (it reads
+  the current set, replaces only categories whose id starts with `omni_`, and sets the union). Omni's push sets
+  `aps.category` to the id. `Omni.trackPushOpened(response: UNNotificationResponse) -> URL?` (new overload) sends
+  `$push_opened { message_id, action }` (`action`: the button id, or `"open"` for the notification itself; dismissals
+  aren't counts) and returns the button's url (else the push's url). The old `trackPushOpened(userInfo)` stays.
+- Android (SDK 0.2.0+): buttons need the app to show Omni's pushes itself. Omni sends pushes with buttons as
+  data-only FCM messages (`omni_message_id`, `omni_title`, `omni_body`, `omni_subtitle`, `omni_url`, `omni_image`,
+  `omni_channel`, `omni_actions` = JSON `[{id,title,url}]`, `omni_group`), only to devices that said they can. The app's
+  `FirebaseMessagingService.onMessageReceived` calls `Omni.showPush(context, message.data)`, which returns false when
+  the message isn't Omni's; when it is, the SDK builds the notification (the app's channel or `omni_channel`, its
+  small icon from the manifest `com.google.firebase.messaging.default_notification_icon` meta-data else the app icon,
+  big picture when there's an image, the action buttons as PendingIntents that open the app's launch activity with
+  `omni_message_id`, `omni_action`, `omni_url` extras) and posts it. Opening (the notification or a button) is tracked
+  like any Omni push open, with `action`.
+- Capability: `$push_token` gains `buttons: true` when the device can show Omni's buttons: always on Swift 0.5.0+;
+  on Android when the app turned on `Options(showsPushes = true)` (it promises to call `Omni.showPush`). Devices
+  without it get the push without buttons.
+
+`$push_opened` gains `action` (`open` or a button id).

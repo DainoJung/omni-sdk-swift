@@ -19,7 +19,7 @@ final class PushTests: XCTestCase {
         let event = try XCTUnwrap(pushTokens(h).first)
         XCTAssertEqual(event.properties, [
             "token": .string("0aff007b"), "provider": .string("apns"),
-            "environment": .string("sandbox"), "topic": .string("com.example.app"),
+            "environment": .string("sandbox"), "topic": .string("com.example.app"), "buttons": .bool(true),
         ])
         XCTAssertEqual(event.anonId, h.client.anonymousId)
     }
@@ -52,6 +52,19 @@ final class PushTests: XCTestCase {
         set("bb", "sandbox")    // new environment
         XCTAssertEqual(pushTokens(h).map { $0.properties["token"] }, [.string("aa"), .string("aa"), .string("bb"), .string("bb")])
         XCTAssertEqual(pushTokens(h).last?.properties["environment"], .string("sandbox"))
+    }
+
+    /// A token kept by 0.4.0 (no `buttons`) goes out again right after updating, so Omni learns this device shows them.
+    func testTokenFromAnOlderSDKIsResentWithButtons() throws {
+        let storage = MemoryStore()
+        let clock = TestClock()
+        storage.set(#"{"token":"aa","provider":"apns","environment":"production","topic":"app","sentAt":\#(clock.now.timeIntervalSince1970)}"#,
+                    forKey: StoreKey.pushToken)
+        clock.advance(60)
+        let h = Harness(storage: storage, clock: clock)
+        h.client.setPushToken("aa", provider: "apns", environment: "production", topic: "app")
+        h.client.setPushToken("aa", provider: "apns", environment: "production", topic: "app")
+        XCTAssertEqual(pushTokens(h).map { $0.properties["buttons"] }, [.bool(true)])
     }
 
     func testResetMovesTheTokenToTheNewPerson() {
@@ -109,7 +122,10 @@ final class PushTests: XCTestCase {
         h.client.pushOpened(messageId: "m_1")
         let event = try XCTUnwrap(h.allEvents.first)
         XCTAssertEqual(event.event, "$push_opened")
-        XCTAssertEqual(event.properties, ["message_id": .string("m_1")])
+        XCTAssertEqual(event.properties, ["message_id": .string("m_1"), "action": .string("open")])
+
+        h.client.pushOpened(messageId: "m_2", action: "b1")
+        XCTAssertEqual(h.allEvents.last?.properties, ["message_id": .string("m_2"), "action": .string("b1")])
     }
 
     func testOmniMessageParsing() {

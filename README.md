@@ -14,7 +14,7 @@ https://github.com/DainoJung/omni-sdk-swift
 Or add it to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.4.0")
+.package(url: "https://github.com/DainoJung/omni-sdk-swift", from: "0.5.0")
 // target: .product(name: "Omni", package: "omni-sdk-swift")
 ```
 
@@ -178,7 +178,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         // Records the open for Omni's pushes and hands back their deep link; other pushes return nil.
-        if let url = Omni.trackPushOpened(response.notification.request.content.userInfo) {
+        if let url = Omni.trackPushOpened(response) {
             UIApplication.shared.open(url)
         }
         completionHandler()
@@ -196,6 +196,27 @@ Ask for permission when it makes sense in your app (`UNUserNotificationCenter.cu
 reads the permission on launch and each time the app comes to the foreground, and reports it when it changed. Whether a
 token is for APNs' sandbox (builds run from Xcode) or production (TestFlight, App Store) comes from the build's
 provisioning profile. Add the Push Notifications capability in Xcode.
+
+### Push buttons
+
+Omni can add up to 3 buttons to a push ("Review now", "Later"). There's nothing to set up in the app beyond passing
+the whole response to `Omni.trackPushOpened`, as above:
+
+```swift
+func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                            withCompletionHandler completionHandler: @escaping () -> Void) {
+    // The tapped button's link, else the push's; nil for other pushes and for buttons with nothing to open.
+    if let url = Omni.trackPushOpened(response) {
+        UIApplication.shared.open(url)
+    }
+    completionHandler()
+}
+```
+
+Omni registers its buttons with the system itself (as notification categories whose ids start with `omni_`) each time
+it loads its config, and keeps your app's own categories. If your app calls `setNotificationCategories`, which replaces
+the whole set, Omni puts its own back the next time it loads its config. `trackPushOpened(userInfo)` still works, but
+can't tell which button was tapped.
 
 ## Deleting a person
 
@@ -215,11 +236,12 @@ your coding agent; it places your app's whole tracking plan and keeps the rules 
 - With `captureLifecycle` on: app installed, app updated and app opened.
 - With `captureScreens` on (iOS, tvOS): the name of each screen as it appears (from its type, see Screens).
 - With every event: app version and build, platform, device type, device model (e.g. `iPhone17,3`), OS version,
-  locale, a session id, a random anonymous id made on first launch, and your user id after `identify`.
+  locale, time zone (e.g. `Asia/Seoul`, so Omni can send pushes at a local time), a session id, a random anonymous id
+  made on first launch, and your user id after `identify`.
 - Experiments: which variant this person saw (`$exposure`). The variant is picked on the device from a random id that's
   never sent; the experiments are fetched from Omni with your app's key only.
 - Push, when you use it: the APNs device token, its environment and your bundle id; the notification permission; which
-  of Omni's pushes were opened.
+  of Omni's pushes were opened, and which button was tapped.
 
 What isn't collected: no IDFA or other advertising ids, no autocapture of taps, no screen contents, screenshots or
 session recordings, and no location. Email and traits are sent only when you set them.

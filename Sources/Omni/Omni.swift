@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UserNotifications)
+import UserNotifications
+#endif
 
 /// Omni: send product events from your app to Omni Cloud.
 ///
@@ -9,7 +12,7 @@ import Foundation
 ///
 /// Every call is thread-safe, returns immediately and never throws. Work happens on a background queue.
 public enum Omni {
-    public static let sdkVersion = "0.4.0"
+    public static let sdkVersion = "0.5.0"
 
     public struct Options: Sendable {
         /// Omni Cloud's base URL. Events go to `<host>/v1/batch`; experiments come from `<host>/v1/config`.
@@ -111,7 +114,8 @@ public enum Omni {
             queueStore: FileQueueStore(fileURL: FileQueueStore.defaultURL(), log: log),
             transport: URLSessionTransport(),
             device: device,
-            pushPermission: SystemPushPermission.reader()
+            pushPermission: SystemPushPermission.reader(),
+            pushCategories: SystemPushCategories.registrar()
         )
 
         lock.lock()
@@ -199,13 +203,37 @@ public enum Omni {
 
     /// Call when a notification is opened (`userNotificationCenter(_:didReceive:withCompletionHandler:)`, with
     /// `response.notification.request.content.userInfo`). For Omni's pushes it records `$push_opened` and returns the
-    /// push's deep link, if it has one; for any other push it does nothing and returns nil.
+    /// push's deep link, if it has one; for any other push it does nothing and returns nil. Prefer passing the whole
+    /// response (`trackPushOpened(response)`), which also knows which button was tapped.
     @discardableResult
     public static func trackPushOpened(_ userInfo: [AnyHashable: Any]) -> URL? {
         guard let message = Push.omniMessage(userInfo) else { return nil }
         client("trackPushOpened")?.pushOpened(messageId: message.messageId)
         return message.url
     }
+
+    #if canImport(UserNotifications) && !os(watchOS) && !os(tvOS)
+    /// Call with the response in `userNotificationCenter(_:didReceive:withCompletionHandler:)`. For Omni's pushes it
+    /// records `$push_opened` with what was tapped (the notification, or one of Omni's buttons) and returns the link to
+    /// open: the button's, else the push's; nil for any other push, a dismissal, or a button with nothing to open.
+    @discardableResult
+    public static func trackPushOpened(_ response: UNNotificationResponse) -> URL? {
+        let content = response.notification.request.content
+        return trackPushOpened(actionIdentifier: response.actionIdentifier,
+                               categoryIdentifier: content.categoryIdentifier, userInfo: content.userInfo)
+    }
+
+    /// `trackPushOpened(response)` from its parts: a `UNNotificationResponse` can't be made in tests.
+    static func trackPushOpened(actionIdentifier: String, categoryIdentifier: String,
+                                userInfo: [AnyHashable: Any], client c: OmniClient? = nil) -> URL? {
+        guard actionIdentifier != UNNotificationDismissActionIdentifier, Push.omniMessage(userInfo) != nil else { return nil }
+        let c = c ?? client("trackPushOpened")
+        guard let opened = Push.opened(actionIdentifier: actionIdentifier, categoryIdentifier: categoryIdentifier,
+                                       userInfo: userInfo, categories: c?.config?.pushCategories ?? []) else { return nil }
+        c?.pushOpened(messageId: opened.messageId, action: opened.action)
+        return opened.url
+    }
+    #endif
 
     /// Read once: the provisioning profile doesn't change while the app runs.
     private static let currentPushEnvironment = Push.environment()
